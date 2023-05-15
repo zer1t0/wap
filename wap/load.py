@@ -2,7 +2,9 @@ from .structs import Technology, Imply, Exclude, Pattern, Category
 from typing import Dict, Any, TextIO, Tuple, Union, List
 import json
 import re
+import logging
 
+logger = logging.getLogger(__name__)
 
 def load_file(
         filepath: str
@@ -69,24 +71,28 @@ def load_apps(json_dict) -> Tuple[Dict[str, Technology], Dict[str, Category]]:
     .. _technologies.json: https://github.com/AliasIO/wappalyzer/blob/master/src/technologies.json
     """
     categories = load_categories(json_dict["categories"])
+
     technologies = {
         name: Technology(
             name=name,
             categories=[categories[str(c)] for c in techno.get("cats", [])],
-            url=_transform_patterns(techno.get("url", None)),
-            headers=_transform_patterns(techno.get("headers", None)),
-            cookies=_transform_patterns(techno.get("cookies", None)),
-            html=_transform_patterns(techno.get("html", None)),
-            meta=_transform_patterns(techno.get("meta", None)),
-            scripts=_transform_patterns(techno.get("scripts", None)),
-            js=_transform_patterns(techno.get("js", None), True),
+            url=_transform_patterns(name, techno.get("url", None)),
+            headers=_transform_patterns(name, techno.get("headers", None)),
+            cookies=_transform_patterns(name, techno.get("cookies", None)),
+            html=_transform_patterns(name, techno.get("html", None)),
+            meta=_transform_patterns(name, techno.get("meta", None)),
+            scripts=_transform_patterns(name, techno.get("scripts", None)),
+            js=_transform_patterns(name, techno.get("js", None), True),
             implies=[
                 Imply(name=pt.value, confidence=pt.confidence)
-                for pt in _transform_patterns(techno.get("implies", None))
+                for pt in _transform_patterns(name, techno.get("implies", None))
             ],
             excludes=[
                 Exclude(name=pt.value)
-                for pt in _transform_patterns(techno.get("excludes", None))
+                for pt in _transform_patterns(
+                        name,
+                        techno.get("excludes", None)
+                )
             ],
             icon=techno.get("icon", ""),
             website=techno.get("website", ""),
@@ -128,6 +134,7 @@ def load_categories(json_dict) -> Dict[str, Category]:
 
 
 def _transform_patterns(
+        tech_name: str,
         patterns: Any,
         case_sensitive: bool = False
 ) -> Union[List[Pattern], Dict[str, List[Pattern]]]:
@@ -146,14 +153,20 @@ def _transform_patterns(
 
     parsed = {}
     for key in patterns:
-        name = key if case_sensitive else key.lower()
-        parsed[name] = [
-            _parse_pattern(ptrn, key)
-            for ptrn in to_list(patterns[key])
-        ]
+        try:
+            name = key if case_sensitive else key.lower()
+            parsed[name] = [
+                _parse_pattern(ptrn, key)
+                for ptrn in to_list(patterns[key])
+            ]
+        except ParseRegexError as e:
+            logger.warning("Invalid regex for '{}': {}".format(tech_name, e))
 
     return parsed["main"] if "main" in parsed else parsed
 
+
+class ParseRegexError(Exception):
+    pass
 
 def _parse_pattern(pattern: str, key: str = "") -> Pattern:
     """Parse the regex pattern and creates a Pattern object.
@@ -169,10 +182,14 @@ def _parse_pattern(pattern: str, key: str = "") -> Pattern:
     # so it is better to substitute it
     regex = value.replace("/", "\\/").replace("[^]", ".")
 
-    attrs = {
-        "value": value,
-        "regex": re.compile(regex, re.I)
-    }
+    try:
+        attrs = {
+            "value": value,
+            "regex": re.compile(regex, re.I)
+        }
+    except re.error as e:
+        raise ParseRegexError(regex)
+
     for attr in parts[1:]:
         attr = attr.split(":")
         if len(attr) > 1:
