@@ -13,6 +13,8 @@ import sys
 import json
 import urllib3
 from .md5 import get_file_md5
+from .update import update_techs_file, DEFAULT_TARGET_FILE
+
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -86,6 +88,18 @@ def parse_args():
     )
 
     parser.add_argument(
+        "--insecure",
+        help="Do not check certificate in connections",
+        action="store_true",
+    )
+
+    parser.add_argument(
+        "--update-techs",
+        help="Update the techs file",
+        action="store_true",
+    )
+
+    parser.add_argument(
         "-v",
         dest="verbosity",
         help="Verbosity",
@@ -97,22 +111,34 @@ def parse_args():
     args.allow_redirects = not args.no_redirect
     args.show_url = not args.no_url
 
-    if not args.file:
-        script_dir = os.path.dirname(os.path.realpath(__file__))
-        args.file = os.path.join(script_dir, "technologies.json")
-
     return args
 
 
 def main():
     args = parse_args()
     init_log(args.verbosity)
-    technologies, categories = wap.load_file(args.file)
+
+    tech_file = args.file
+    if not tech_file:
+        tech_file = DEFAULT_TARGET_FILE
+
+    if args.update_techs:
+        logger.info("Updating technologies file...")
+        update_techs_file(target_file=tech_file, insecure=args.insecure)
+        technologies, categories = wap.load_file(tech_file)
+    else:
+        try:
+            technologies, categories = wap.load_file(tech_file)
+        except FileNotFoundError:
+            logger.warning("Technologies file not found. Updating...")
+            update_techs_file(target_file=tech_file, insecure=args.insecure)
+            technologies, categories = wap.load_file(tech_file)
+
     logger.info("Loaded %d technologies", len(technologies))
     logger.info("Loaded %d categories", len(categories))
     logger.info("Workers: %s", args.workers)
     logger.info("Output: %s format", "json" if args.json else "grep")
-    logger.info("Technologies file MD5: %s", get_file_md5(args.file))
+    logger.info("Technologies file MD5: %s", get_file_md5(tech_file))
 
     pool = ThreadPoolExecutor(args.workers)
     q = Queue()
@@ -144,10 +170,8 @@ def main():
 def init_log(verbosity=0, log_file=None):
 
     if verbosity == 1:
-        level = logging.WARN
-    elif verbosity == 2:
         level = logging.INFO
-    elif verbosity > 2:
+    elif verbosity > 1:
         level = logging.DEBUG
     else:
         level = logging.CRITICAL
