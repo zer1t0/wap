@@ -46,3 +46,5 @@ from .structs import Technology, TechMatch, Category, Pattern, \
 from .helper import extract_scripts, extract_metas, \
     parse_requests_cookies, parse_requests_headers, \
     parse_requests_response, discover_requests_technologies
+
+from .main import main
